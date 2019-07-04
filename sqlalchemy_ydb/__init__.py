@@ -5,14 +5,22 @@ from kikimr.public.dbapi.errors import NotSupportedError
 
 
 try:
-    from sqlalchemy.engine.default import DefaultDialect
-    from sqlalchemy.sql.compiler import IdentifierPreparer, GenericTypeCompiler
+    from sqlalchemy.engine.default import DefaultDialect, DefaultExecutionContext
+    from sqlalchemy.sql.compiler import DDLCompiler, IdentifierPreparer, GenericTypeCompiler
 
     class YdbIdentifierPreparer(IdentifierPreparer):
         def __init__(self, dialect):
             super(YdbIdentifierPreparer, self).__init__(dialect,
                                                         initial_quote='`',
                                                         final_quote='`')
+
+    class YdbDDLCompiler(DDLCompiler):
+        raw_create_table = None
+
+        def visit_create_table(self, create):
+            self.raw_create_table = create
+            return super(YdbDDLCompiler, self).visit_create_table(create)
+
 
     class YdbTypeCompiler(GenericTypeCompiler):
         def _render_string_type(self, type_, name):
@@ -22,6 +30,10 @@ try:
             if type_.collation:
                 raise NotSupportedError
             return text
+
+
+    class YdbExecutionContext(DefaultExecutionContext):
+        pass
 
 
     class YdbDialect(DefaultDialect):
@@ -47,10 +59,9 @@ try:
         isolation_level = None
 
         preparer = YdbIdentifierPreparer
+        ddl_compiler = YdbDDLCompiler
         type_compiler = YdbTypeCompiler
-
-        def __init(self, **kwargs):
-            super(DefaultDialect, self).__init__(**kwargs)
+        execution_ctx_cls = YdbExecutionContext
 
         @staticmethod
         def dbapi():
@@ -63,34 +74,8 @@ try:
 
             return False  # TODO
 
-        def _execute_ddl(self, ddl, multiparams, params):
-            """Execute a schema.DDL object."""
-            print(locals())
-            exit(123)
-            if self._has_events or self.engine._has_events:
-                for fn in self.dispatch.before_execute:
-                    ddl, multiparams, params = fn(self, ddl, multiparams, params)
-
-            dialect = self.dialect
-
-            compiled = ddl.compile(
-                dialect=dialect,
-                schema_translate_map=self.schema_for_object
-                if not self.schema_for_object.is_default
-                else None,
-            )
-            ret = self._execute_context(
-                dialect,
-                dialect.execution_ctx_cls._init_ddl,
-                compiled,
-                None,
-                compiled,
-            )
-            if self._has_events or self.engine._has_events:
-                self.dispatch.after_execute(self, ddl, multiparams, params, ret)
-            return ret
-
-
+        def _check_unicode_returns(self, connection, additional_tests=None):
+            return True
 
 except ImportError:
     class YdbDialect(object):
